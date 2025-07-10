@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+import sys
+import argparse
+import re
+from nextcloud_forensics.client import NextcloudClient
+from nextcloud_forensics.utils import NextcloudUtils
+from colorama import init, Fore, Style
+
+# Initialize colorama
+init(autoreset=True)
+
+def main():
+    """
+    Nextcloud istat (nc-istat) utility - Show detailed metadata for a file by ID
+    Similar to istat from The Sleuth Kit but for Nextcloud files
+    """
+    parser = argparse.ArgumentParser(description='Nextcloud istat (nc-istat) utility - Show detailed metadata for a file by its ID')
+    parser.add_argument('--url', required=True, help='Nextcloud server URL')
+    parser.add_argument('--username', required=True, help='Nextcloud username')
+    parser.add_argument('--password', required=True, help='Nextcloud app password')
+    parser.add_argument('--full-activity', action='store_true', help='Show full activity history (not just summary)')
+    parser.add_argument('--raw', action='store_true', help='Display raw metadata instead of formatted output')
+    parser.add_argument('--no-activity', action='store_true', help='Skip fetching activity data')
+    parser.add_argument('--no-versions', action='store_true', help='Skip fetching version history')
+    parser.add_argument('--output-json', help='Save raw response data to JSON file')
+    parser.add_argument('--log-file', help='Path to save detailed API request logs')
+    parser.add_argument('fileid', help='File ID of the file to examine (format: fileid or fileid@timestamp for versioned files)')
+    
+    args = parser.parse_args()
+
+    # Parse file ID to check if it's a versioned file reference
+    version_timestamp = None
+    base_file_id = args.fileid
+    
+    # Check if the file ID includes a timestamp (fileid@timestamp format)
+    if '@' in args.fileid:
+        match = re.match(r'(\d+)@(\d+)', args.fileid)
+        if match:
+            base_file_id = match.group(1)
+            version_timestamp = match.group(2)
+
+    try:
+        client = NextcloudClient(args.url, args.username, args.password, log_file=args.log_file)
+        
+        # Step 1: Get file metadata directly using the file ID with optional version timestamp
+        try:
+            if version_timestamp:
+                print(f"{Fore.CYAN}Requesting versioned file: {base_file_id} @ timestamp {version_timestamp}{Style.RESET_ALL}")
+            
+            # Get file metadata using the enhanced method with optional version_timestamp
+            file_metadata = client.get_file_metadata_by_id(base_file_id, version_timestamp)
+            
+            if not file_metadata:
+                print(f"{Fore.RED}Error: Could not find metadata for file ID: {args.fileid}{Style.RESET_ALL}")
+                sys.exit(1)
+        except Exception as e:
+            print(f"{Fore.RED}Error retrieving file metadata: {e}{Style.RESET_ALL}")
+            sys.exit(1)
+        
+        # Step 2: Get file activity data if requested (only for non-versioned files)
+        activity_data = None
+        if not args.no_activity and not version_timestamp:
+            try:
+                activity_data = client.get_file_activity(base_file_id)
+            except Exception as e:
+                print(f"{Fore.YELLOW}Warning: Could not retrieve activity data: {e}{Style.RESET_ALL}")
+        
+        # Step 3: Get file version history if requested (only for non-versioned files)
+        version_data = None
+        if not args.no_versions and not version_timestamp:
+            try:
+                version_data = client.get_file_versions(base_file_id)
+            except Exception as e:
+                print(f"{Fore.YELLOW}Warning: Could not retrieve version history: {e}{Style.RESET_ALL}")
+        
+        # Step 4: Output the data
+        if args.raw:
+            # Display raw JSON data
+            import json
+            print(json.dumps(file_metadata, indent=2))
+            if activity_data and not args.no_activity:
+                print("\nActivity Data:")
+                print(json.dumps(activity_data, indent=2))
+            if version_data and not args.no_versions:
+                print("\nVersion History:")
+                print(json.dumps(version_data, indent=2))
+        else:
+            # Format and display the metadata
+            NextcloudUtils.display_istat(file_metadata, activity_data, version_data)
+            
+            # If --full-activity is specified and we have activity data, show full timeline
+            if args.full_activity and activity_data:
+                NextcloudUtils.display_file_activity(activity_data)
+        
+        # Save to JSON file if requested
+        if args.output_json:
+            output_data = {
+                'file_metadata': file_metadata,
+                'activity_data': activity_data
+            }
+            # Include version data if available
+            if version_data:
+                output_data['version_data'] = version_data
+            NextcloudUtils.save_json_to_file(output_data, args.output_json)
+            
+    except Exception as e:
+        print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()

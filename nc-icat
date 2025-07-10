@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+import sys
+import argparse
+import re
+from nextcloud_forensics.client import NextcloudClient
+from colorama import init, Fore, Style
+
+# Initialize colorama
+init(autoreset=True)
+
+def main():
+    """
+    Nextcloud icat (nc-icat) utility - Output file content by ID to console
+    Similar to icat from The Sleuth Kit but for Nextcloud files
+    """
+    parser = argparse.ArgumentParser(description='Nextcloud icat (nc-icat) utility - Output file content by ID to console')
+    parser.add_argument('--url', required=True, help='Nextcloud server URL')
+    parser.add_argument('--username', required=True, help='Nextcloud username')
+    parser.add_argument('--password', required=True, help='Nextcloud app password')
+    parser.add_argument('--output', help='Output file path (instead of console)')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Show verbose information')
+    parser.add_argument('--log-file', help='Path to save detailed API request logs')
+    parser.add_argument('fileid', help='File ID of the file to examine (format: fileid or fileid@timestamp for versioned files)')
+    
+    args = parser.parse_args()
+
+    # Parse file ID to check if it's a versioned file reference
+    version_timestamp = None
+    base_file_id = args.fileid
+    
+    # Check if the file ID includes a timestamp (fileid@timestamp format)
+    if '@' in args.fileid:
+        match = re.match(r'(\d+)@(\d+)', args.fileid)
+        if match:
+            base_file_id = match.group(1)
+            version_timestamp = match.group(2)
+
+    try:
+        # Show what we're retrieving if verbose is enabled
+        if args.verbose:
+            if version_timestamp:
+                print(f"{Fore.CYAN}Retrieving versioned file: {base_file_id} @ timestamp {version_timestamp}{Style.RESET_ALL}", file=sys.stderr)
+            else:
+                print(f"{Fore.CYAN}Retrieving file: {base_file_id}{Style.RESET_ALL}", file=sys.stderr)
+        
+        client = NextcloudClient(args.url, args.username, args.password, log_file=args.log_file)
+        
+        # Get file content directly without retrieving metadata first
+        try:
+            content = client.get_file_content(base_file_id, version_timestamp)
+            
+            # Output to file if specified
+            if args.output:
+                with open(args.output, 'wb') as f:
+                    f.write(content)
+                if args.verbose:
+                    print(f"{Fore.GREEN}File content written to: {args.output}{Style.RESET_ALL}", file=sys.stderr)
+            else:
+                # Output directly to stdout without any formatting or headers
+                # This allows for using redirection: nc-icat ... > file
+                sys.stdout.buffer.write(content)
+                    
+        except Exception as e:
+            print(f"Error retrieving file content: {e}", file=sys.stderr)
+            sys.exit(1)
+            
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()

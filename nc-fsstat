@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+import sys
+import argparse
+import json
+from nextcloud_forensics.client import NextcloudClient
+from nextcloud_forensics.utils import NextcloudUtils
+from colorama import init, Fore, Style
+
+# Initialize colorama
+init(autoreset=True)
+
+def main():
+    """
+    Nextcloud fsstat (nc-fsstat) utility - Display file system statistics and general information
+    Similar to fsstat from The Sleuth Kit but for Nextcloud instances
+    """
+    parser = argparse.ArgumentParser(description='Nextcloud fsstat (nc-fsstat) utility - Display file system statistics and general information about Nextcloud instances')
+    parser.add_argument('--url', required=True, help='Nextcloud server URL')
+    parser.add_argument('--username', required=True, help='Nextcloud username')
+    parser.add_argument('--password', required=True, help='Nextcloud app password')
+    parser.add_argument('--raw', action='store_true', help='Display raw JSON data instead of formatted output')
+    parser.add_argument('--output-json', help='Save raw response data to JSON file')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Show verbose information')
+    parser.add_argument('--log-file', help='Path to save detailed API request logs')
+    
+    args = parser.parse_args()
+
+    try:
+        if args.verbose:
+            print(f"{Fore.CYAN}Connecting to Nextcloud instance...{Style.RESET_ALL}")
+        
+        client = NextcloudClient(args.url, args.username, args.password, log_file=args.log_file)
+        
+        # Gather server capabilities
+        if args.verbose:
+            print(f"{Fore.CYAN}Gathering server capabilities...{Style.RESET_ALL}")
+        capabilities_data = client.get_capabilities()
+        
+        # Gather user information
+        if args.verbose:
+            print(f"{Fore.CYAN}Gathering user information...{Style.RESET_ALL}")
+        user_data = client.get_user()
+        
+        # Try to get all users if admin privileges
+        all_users_data = None
+        if args.verbose:
+            print(f"{Fore.CYAN}Attempting to gather user list (admin required)...{Style.RESET_ALL}")
+        try:
+            all_users_data = client.get_all_users()
+        except Exception as e:
+            if args.verbose:
+                print(f"{Fore.YELLOW}Note: Cannot access user list - {e}{Style.RESET_ALL}")
+        
+        # Combine data
+        fsstat_data = {
+            'capabilities': capabilities_data,
+            'user': user_data,
+            'all_users': all_users_data
+        }
+        
+        # Display results
+        if args.raw:
+            print(json.dumps(fsstat_data, indent=2))
+        else:
+            display_fsstat(fsstat_data, args.verbose)
+        
+        # Save to JSON if requested
+        if args.output_json:
+            NextcloudUtils.save_json_to_file(fsstat_data, args.output_json)
+            if args.verbose:
+                print(f"{Fore.GREEN}Data saved to: {args.output_json}{Style.RESET_ALL}")
+        
+    except Exception as e:
+        print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+        sys.exit(1)
+
+def display_fsstat(fsstat_data, verbose=False):
+    """Display formatted fsstat information"""
+    from colorama import Fore, Style, Back
+    
+    print(f"\n{Back.BLUE}{Fore.WHITE}{Style.BRIGHT} NEXTCLOUD FILE SYSTEM INFORMATION {Style.RESET_ALL}\n")
+    
+    # Display server information
+    display_server_info(fsstat_data.get('capabilities', {}), verbose)
+    
+    # Display user information
+    display_user_summary(fsstat_data.get('user', {}), fsstat_data.get('all_users', {}), verbose)
+
+def display_server_info(capabilities_data, verbose=False):
+    """Display server capabilities information"""
+    from colorama import Fore, Style
+    
+    try:
+        # Check if the response is successful
+        meta = capabilities_data.get('ocs', {}).get('meta', {})
+        if meta.get('status') != 'ok':
+            print(f"{Fore.RED}Error retrieving server capabilities: {meta.get('message', 'Unknown error')}")
+            return
+            
+        # Extract capabilities data
+        data = capabilities_data.get('ocs', {}).get('data', {})
+        if not data:
+            print(f"{Fore.RED}Error: No capabilities data found in the response")
+            return
+            
+        # Version information section
+        version = data.get('version', {})
+        print(f"{Fore.CYAN}{Style.BRIGHT}=== Server Information ==={Style.RESET_ALL}")
+        print(f"{Fore.GREEN}Nextcloud Version:  {Fore.WHITE}{version.get('string', 'N/A')}")
+        print(f"{Fore.GREEN}Edition:            {Fore.WHITE}{version.get('edition', 'N/A')}")
+        print(f"{Fore.GREEN}Version Details:    {Fore.WHITE}{version.get('major', 'N/A')}.{version.get('minor', 'N/A')}.{version.get('micro', 'N/A')}")
+        print(f"{Fore.GREEN}Extended Support:   {Fore.WHITE}{version.get('extendedSupport', False)}")
+        
+        # Extract capabilities
+        capabilities = data.get('capabilities', {})
+        
+        # Instance branding
+        theming = capabilities.get('theming', {})
+        if theming:
+            print(f"{Fore.GREEN}Instance Name:      {Fore.WHITE}{theming.get('name', 'N/A')}")
+            print(f"{Fore.GREEN}Instance URL:       {Fore.WHITE}{theming.get('url', 'N/A')}")
+            if theming.get('slogan'):
+                print(f"{Fore.GREEN}Instance Slogan:    {Fore.WHITE}{theming.get('slogan', 'N/A')}")
+        
+        # Core capabilities
+        core = capabilities.get('core', {})
+        if core:
+            print(f"\n{Fore.CYAN}{Style.BRIGHT}=== Core Capabilities ==={Style.RESET_ALL}")
+            print(f"{Fore.GREEN}WebDAV Root:        {Fore.WHITE}{core.get('webdav-root', 'N/A')}")
+            print(f"{Fore.GREEN}Poll Interval:      {Fore.WHITE}{core.get('pollinterval', 'N/A')}")
+            print(f"{Fore.GREEN}Mod Rewrite:        {Fore.WHITE}{core.get('mod-rewrite-working', False)}")
+            if verbose:
+                print(f"{Fore.GREEN}Reference API:      {Fore.WHITE}{core.get('reference-api', False)}")
+        
+        # Files capabilities
+        files = capabilities.get('files', {})
+        if files:
+            print(f"\n{Fore.CYAN}{Style.BRIGHT}=== File System Features ==={Style.RESET_ALL}")
+            print(f"{Fore.GREEN}Big File Chunking:  {Fore.WHITE}{files.get('bigfilechunking', False)}")
+            print(f"{Fore.GREEN}Undelete:           {Fore.WHITE}{files.get('undelete', False)}")
+            print(f"{Fore.GREEN}Versioning:         {Fore.WHITE}{files.get('versioning', False)}")
+            print(f"{Fore.GREEN}Comments:           {Fore.WHITE}{files.get('comments', False)}")
+            
+            if verbose:
+                # Forbidden files
+                forbidden_files = files.get('forbidden_filenames', files.get('blacklisted_files', []))
+                if forbidden_files:
+                    print(f"{Fore.GREEN}Forbidden Files:    {Fore.WHITE}{', '.join(forbidden_files[:5])}")
+                    if len(forbidden_files) > 5:
+                        print(f"{Fore.GREEN}                    {Fore.WHITE}... and {len(forbidden_files)-5} more")
+        
+        # Activity capabilities
+        activity = capabilities.get('activity', {})
+        if activity:
+            print(f"\n{Fore.CYAN}{Style.BRIGHT}=== Activity Tracking ==={Style.RESET_ALL}")
+            print(f"{Fore.GREEN}Activity API:       {Fore.WHITE}v{activity.get('apiv4', 'N/A')}")
+        
+        # Security features
+        security_features = []
+        if capabilities.get('end-to-end-encryption', {}).get('enabled'):
+            security_features.append("End-to-End Encryption")
+        if capabilities.get('twofactor_totp', {}).get('enabled'):
+            security_features.append("Two-Factor Authentication")
+        if capabilities.get('password_policy'):
+            security_features.append("Password Policy")
+        
+        if security_features:
+            print(f"\n{Fore.CYAN}{Style.BRIGHT}=== Security Features ==={Style.RESET_ALL}")
+            for feature in security_features:
+                print(f"{Fore.GREEN}✓ {feature}")
+        
+        # Additional capabilities in verbose mode
+        if verbose:
+            sharing = capabilities.get('files_sharing', {})
+            if sharing:
+                print(f"\n{Fore.CYAN}{Style.BRIGHT}=== Sharing Capabilities ==={Style.RESET_ALL}")
+                print(f"{Fore.GREEN}Public Sharing:     {Fore.WHITE}{sharing.get('public', {}).get('enabled', False)}")
+                print(f"{Fore.GREEN}User Sharing:       {Fore.WHITE}{sharing.get('user', {}).get('enabled', False)}")
+                print(f"{Fore.GREEN}Group Sharing:      {Fore.WHITE}{sharing.get('group_sharing', False)}")
+                print(f"{Fore.GREEN}Federated Sharing:  {Fore.WHITE}{sharing.get('federation', {}).get('outgoing', False)}")
+                
+    except Exception as e:
+        print(f"{Fore.RED}Error displaying server information: {e}")
+
+def display_user_summary(user_data, all_users_data, verbose=False):
+    """Display user information summary"""
+    from colorama import Fore, Style
+    from datetime import datetime
+    
+    try:
+        # Check if the response is successful
+        meta = user_data.get('ocs', {}).get('meta', {})
+        if meta.get('statuscode') != 200:
+            print(f"{Fore.RED}Error retrieving user data: {meta.get('message', 'Unknown error')}")
+            return
+            
+        # Extract user data
+        data = user_data.get('ocs', {}).get('data', {})
+        if not data:
+            print(f"{Fore.RED}Error: No user data found in the response")
+            return
+            
+        # Current user information
+        print(f"\n{Fore.CYAN}{Style.BRIGHT}=== Current User Information ==={Style.RESET_ALL}")
+        print(f"{Fore.GREEN}Username:           {Fore.WHITE}{data.get('id', 'N/A')}")
+        print(f"{Fore.GREEN}Display Name:       {Fore.WHITE}{data.get('displayname', 'N/A')}")
+        print(f"{Fore.GREEN}Email:              {Fore.WHITE}{data.get('email', 'N/A')}")
+        print(f"{Fore.GREEN}Backend:            {Fore.WHITE}{data.get('backend', 'N/A')}")
+        print(f"{Fore.GREEN}Enabled:            {Fore.WHITE}{data.get('enabled', False)}")
+        
+        # Last login information
+        if data.get('lastLogin'):
+            timestamp = int(data.get('lastLogin', 0)) // 1000  # Convert from milliseconds to seconds
+            last_login = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+            print(f"{Fore.GREEN}Last Login:         {Fore.WHITE}{last_login}")
+        
+        # Storage information
+        print(f"\n{Fore.CYAN}{Style.BRIGHT}=== Storage Information ==={Style.RESET_ALL}")
+        quota = data.get('quota', {})
+        
+        if quota:
+            used = quota.get('used', 0)
+            total = quota.get('quota', 0)
+            
+            used_formatted = NextcloudUtils.format_size(used)
+            
+            if total == -3:  # -3 means unlimited quota in Nextcloud
+                total_formatted = "Unlimited"
+                percentage = 0
+            else:
+                total_formatted = NextcloudUtils.format_size(total)
+                percentage = (used / total * 100) if total > 0 else 0
+                
+            print(f"{Fore.GREEN}Used Space:         {Fore.WHITE}{used_formatted}")
+            print(f"{Fore.GREEN}Total Quota:        {Fore.WHITE}{total_formatted}")
+            if total != -3:
+                print(f"{Fore.GREEN}Usage Percentage:   {Fore.WHITE}{percentage:.1f}%")
+        
+        # Server users information
+        if all_users_data:
+            users_meta = all_users_data.get('ocs', {}).get('meta', {})
+            if users_meta.get('statuscode') == 200:
+                users_list = all_users_data.get('ocs', {}).get('data', {}).get('users', [])
+                print(f"\n{Fore.CYAN}{Style.BRIGHT}=== Server Users ==={Style.RESET_ALL}")
+                print(f"{Fore.GREEN}Total Users:        {Fore.WHITE}{len(users_list)}")
+                if verbose and len(users_list) > 0:
+                    print(f"{Fore.GREEN}User List:          {Fore.WHITE}{', '.join(users_list[:10])}")
+                    if len(users_list) > 10:
+                        print(f"{Fore.GREEN}                    {Fore.WHITE}... and {len(users_list)-10} more")
+            else:
+                print(f"\n{Fore.CYAN}{Style.BRIGHT}=== Server Users ==={Style.RESET_ALL}")
+                print(f"{Fore.YELLOW}Total Users:        Access denied (admin privileges required)")
+        else:
+            print(f"\n{Fore.CYAN}{Style.BRIGHT}=== Server Users ==={Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}Total Users:        Access denied (admin privileges required)")
+                
+    except Exception as e:
+        print(f"{Fore.RED}Error displaying user information: {e}")
+
+if __name__ == '__main__':
+    main()

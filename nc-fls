@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+import sys
+import argparse
+from nextcloud_forensics.client import NextcloudClient
+from nextcloud_forensics.utils import NextcloudUtils
+from colorama import init, Fore, Style
+
+# Initialize colorama
+init(autoreset=True)
+
+def main():
+    parser = argparse.ArgumentParser(description='Nextcloud fls (nc-fls) utility')
+    parser.add_argument('--url', required=True, help='Nextcloud server URL')
+    parser.add_argument('--username', required=True, help='Nextcloud username')
+    parser.add_argument('--password', required=True, help='Nextcloud app password')
+    parser.add_argument('-r', '--recursive', action='store_true', help='List directories recursively')
+    parser.add_argument('-d', '--deleted', action='store_true', help='Include deleted files and directories')
+    parser.add_argument('--log-file', help='Path to save detailed API request logs')
+    parser.add_argument('path', nargs='?', default='', help='Path to list (default: root)')
+    args = parser.parse_args()
+
+    try:
+        client = NextcloudClient(args.url, args.username, args.password, log_file=args.log_file)
+        # Fetch active files
+        file_items = client.get_files(path=args.path, recursive=args.recursive)
+        # Fetch trash items if requested
+        trash_items = client.get_trashbin() if args.deleted else []
+        # Display fls tree
+        NextcloudUtils.display_fls(file_items, trash_items=trash_items, recursive=args.recursive)
+    except Exception as e:
+        print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()
